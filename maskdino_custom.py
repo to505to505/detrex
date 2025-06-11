@@ -1,29 +1,16 @@
 from typing import Tuple
 from detectron2.config import CfgNode
+from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.modeling.backbone import D2SwinTransformer
+from projects.maskdino.modeling.meta_arch import MaskDINOHead
+from projects.maskdino.modeling.pixel_decoder import MaskDINOEncoder
+from projects.maskdino.modeling.matcher import HungarianMatcher
+from projects.maskdino.modeling.transformer_decoder import MaskDINODecoder
+from projects.maskdino.modeling.criterion import SetCriterion
 
 class MaskDINOCustom(MaskDINO):
     def init(
-        self,
-        *,
-        sem_seg_head,
-        criterion,
-        num_queries: int,
-        object_mask_threshold: float,
-        overlap_threshold: float,
-        metadata,
-        size_divisibility: int,
-        sem_seg_postprocess_before_inference: bool,
-        pixel_mean: Tuple[float],
-        pixel_std: Tuple[float],
-        semantic_on: bool,
-        panoptic_on: bool,
-        instance_on: bool,
-        test_topk_per_image: int,
-        pano_temp: float,
-        focus_on_box: bool = False,
-        transform_eval: bool = False,
-        semantic_ce_loss: bool = False,
+        self
     ):
         # Create Swin config
         cfg = CfgNode()
@@ -48,8 +35,174 @@ class MaskDINOCustom(MaskDINO):
         cfg.MODEL.SWIN.USE_CHECKPOINT = False
         cfg.MODEL.SWIN.OUT_FEATURES = ["res2", "res3", "res4", "res5"]
 
+
+
+
         # Create Swin backbone
         swin_backbone = D2SwinTransformer(cfg, input_shape=None)
+        backbone_shape = swin_backbone.output_shape()
+
+
+
+
+        ## pixel decoder
+        transformer_dim_feedforward = 2048
+        transformer_enc_layers = 6
+        conv_dim = 256
+        mask_dim = 256
+        norm = "GN"
+        transformer_in_features = ["res2", "res3", "res4", "res5"]
+        common_stride = 4
+        num_feature_levels = 4
+        total_num_feature_levels = 5
+        feature_order = "low2high"
+
+        
+        transformer_dropout = 0.0  
+        transformer_nheads = 8  
+
+        pixel_decoder = MaskDINOEncoder(input_shape=backbone_shape,
+        transformer_dropout=transformer_dropout,
+        transformer_nheads=transformer_nheads,
+        transformer_dim_feedforward=transformer_dim_feedforward,
+        transformer_enc_layers=transformer_enc_layers,
+        conv_dim=conv_dim,
+        mask_dim=mask_dim,
+        norm=norm,
+        transformer_in_features=transformer_in_features,
+        common_stride=common_stride,
+        num_feature_levels=num_feature_levels,
+        total_num_feature_levels=total_num_feature_levels,
+        feature_order=feature_order,)
+        
+
+
+
+
+                # Параметры из секции MODEL.MaskDINO
+        hidden_dim = 256
+        num_queries = 300
+        nheads = 8
+        dim_feedforward = 2048
+        dec_layers = 9
+        dropout = 0.0
+        enforce_input_project = False # В YAML ENFORCE_INPUT_PROJ
+        two_stage = True
+        dn = "seg"
+        dn_num = 100
+        initialize_box_type = 'bitmask'
+        initial_pred = True
+        deep_supervision = True # В YAML DEEP_SUPERVISION, соответствует return_intermediate_dec
+
+        # Параметры из секции MODEL.SEM_SEG_HEAD
+        num_classes = 80
+        mask_dim = 256
+        total_num_feature_levels = 5
+
+        # Параметры, для которых используются стандартные значения (т.к. их нет в YAML)
+        in_channels = hidden_dim # Входные каналы для декодера - это скрытое измерение модели
+        mask_classification = True # MaskDINO по своей сути выполняет классификацию масок
+        noise_scale = 0.4  # Типичное стандартное значение для масштаба шума в denoising
+        learn_tgt = True # Запросы (targets) в DETR-подобных моделях обычно являются обучаемыми параметрами
+        activation = 'relu' # Стандартная функция активации в трансформерах
+        dec_n_points = 4 # Стандартное количество точек для Deformable Attention в декодере
+        query_dim = 4 # Размерность для представления координат (x, y, w, h) в запросах
+        dec_layer_share = False # Слои декодера обычно не разделяют веса
+        semantic_ce_loss = False # Включается для panoptic segmentation, у вас PANOPTIC_ON: False
+
+
+# --- 2. Инициализация объекта decoder ---
+
+        
+
+        transformer_decoder = MaskDINODecoder(
+            in_channels=in_channels,
+            mask_classification=mask_classification,
+            num_classes=num_classes,
+            hidden_dim=hidden_dim,
+            num_queries=num_queries,
+            nheads=nheads,
+            dim_feedforward=dim_feedforward,
+            dec_layers=dec_layers,
+            mask_dim=mask_dim,
+            enforce_input_project=enforce_input_project,
+            two_stage=two_stage,
+            dn=dn,
+            noise_scale=noise_scale,
+            dn_num=dn_num,
+            initialize_box_type=initialize_box_type,
+            initial_pred=initial_pred,
+            learn_tgt=learn_tgt,
+            total_num_feature_levels=total_num_feature_levels,
+            dropout=dropout,
+            activation=activation,
+            dec_n_points=dec_n_points,
+            return_intermediate_dec=deep_supervision,
+            query_dim=query_dim,
+            dec_layer_share=dec_layer_share,
+            semantic_ce_loss=semantic_ce_loss,
+        )
+
+     
+
+        sem_seg_head = MaskDINOHead(
+            input_shape=backbone_shape,
+           pixel_decoder = pixel_decoder,
+            transformer_predictor=transformer_decoder,
+            num_classes=3,
+            ignore_value=255,
+             loss_weight=1.0, 
+            
+        )
+
+        # --- 3. Конфигурация и создание Matcher (для функции потерь) ---
+        matcher = HungarianMatcher(
+            cost_class=4.0,   # из CLASS_WEIGHT
+            cost_mask=5.0,    # из MASK_WEIGHT
+            cost_dice=5.0,    # из DICE_WEIGHT
+            num_points=12544, # из TRAIN_NUM_POINTS
+        )
+        
+
+
+
+
+
+
+
+
+        # --- 4. Конфигурация и создание функции потерь (Criterion) ---
+        weight_dict = {
+            "loss_ce": 4.0,       # из CLASS_WEIGHT
+            "loss_mask": 5.0,     # из MASK_WEIGHT
+            "loss_dice": 5.0,     # из DICE_WEIGHT
+            "loss_box": 5.0,      # из BOX_WEIGHT
+            "loss_giou": 2.0,     # из GIOU_WEIGHT
+        }
+        # Для слоев декодера (deep supervision)
+        aux_weight_dict = {}
+        for i in range(sem_seg_head.dec_layers):
+            aux_weight_dict.update({k + f"_{i}": v for k, v in weight_dict.items()})
+        # Для initial_pred
+        aux_weight_dict.update({k + f'_initial': v for k, v in weight_dict.items()})
+        weight_dict.update(aux_weight_dict)
+
+        criterion = SetCriterion(
+            num_classes=3,
+            matcher=matcher,
+            weight_dict=weight_dict,
+            eos_coef=0.1, 
+            losses=["labels", "masks", "boxes"],
+            dn="seg",
+            dn_num=100,
+            dn_losses=["labels", "masks", "boxes"],
+            panoptic_on=False 
+        )
+
+        # --- 5. Инициализация родительского класса MaskDINO со всеми компонентами ---
+        # Создаем "пустые" метаданные, так как они обычно приходят из датасета
+        metadata = MetadataCatalog.get("right_contrast_v1_train")
+    
 
         # Initialize parent class with our custom backbone
         super().init(
@@ -57,19 +210,17 @@ class MaskDINOCustom(MaskDINO):
             sem_seg_head=sem_seg_head,
             criterion=criterion,
             num_queries=num_queries,
-            object_mask_threshold=object_mask_threshold,
-            overlap_threshold=overlap_threshold,
+            object_mask_threshold=0.25,
+            overlap_threshold=0.8,
             metadata=metadata,
-            size_divisibility=size_divisibility,
-            sem_seg_postprocess_before_inference=sem_seg_postprocess_before_inference,
-            pixel_mean=pixel_mean,
-            pixel_std=pixel_std,
-            semantic_on=semantic_on,
-            panoptic_on=panoptic_on,
-            instance_on=instance_on,
-            test_topk_per_image=test_topk_per_image,
-            pano_temp=pano_temp,
-            focus_on_box=focus_on_box,
-            transform_eval=transform_eval,
-            semantic_ce_loss=semantic_ce_loss,
+            size_divisibility=32,
+            sem_seg_postprocess_before_inference=False,
+            pixel_mean=[ 123.675, 116.280, 103.530 ],
+            pixel_std=[ 58.395, 57.120, 57.375 ],
+            semantic_on=False,
+            panoptic_on=False,
+            instance_on=True,
+            test_topk_per_image=5,
+            pano_temp=0,
+            
         )

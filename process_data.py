@@ -95,28 +95,28 @@ def load_yolo_seg_dicts(image_dir, label_dir, class_names_list):
                             poly_absolute.append(x_norm * width)
                             poly_absolute.append(y_norm * height)
                         
-                        # Ensure polygon has at least 3 points (6 values)
-                        if len(poly_absolute) < 6:
-                            print(f"Warning: Invalid polygon (less than 3 points) in {label_path} for {img_filename} (line {line_idx+1}). Skipping annotation.")
-                            continue
+                            # Ensure polygon has at least 3 points (6 values)
+                            if len(poly_absolute) < 6:
+                                print(f"Warning: Invalid polygon (less than 3 points) in {label_path} for {img_filename} (line {line_idx+1}). Skipping annotation.")
+                                continue
 
-                        # Calculate bounding box from polygon
-                        poly_np = np.array(poly_absolute).reshape(-1, 2)
-                        min_x, min_y = np.min(poly_np, axis=0)
-                        max_x, max_y = np.max(poly_np, axis=0)
+                            # Calculate bounding box from polygon
+                            poly_np = np.array(poly_absolute).reshape(-1, 2)
+                            min_x, min_y = np.min(poly_np, axis=0)
+                            max_x, max_y = np.max(poly_np, axis=0)
 
-                        obj = {
-                            "bbox": [float(min_x), float(min_y), float(max_x), float(max_y)],
-                            "bbox_mode": BoxMode.XYXY_ABS,
-                            "segmentation": [poly_absolute], # List of polygons
-                            "category_id": class_id,
-                            "iscrowd": 0 
-                        }
-                        annotations.append(obj)
+                            obj = {
+                                "bbox": [float(min_x), float(min_y), float(max_x), float(max_y)],
+                                "bbox_mode": BoxMode.XYXY_ABS,
+                                "segmentation": [poly_absolute], # List of polygons
+                                "category_id": class_id,
+                                "iscrowd": 0 
+                            }
+                            annotations.append(obj)
             
-            record["annotations"] = annotations
-            dataset_dicts.append(record)
-            
+    record["annotations"] = annotations
+    dataset_dicts.append(record)
+                            
     print(f"Finished processing. Loaded {len(dataset_dicts)} image records.")
     return dataset_dicts
 
